@@ -795,7 +795,6 @@ function renderDaily() {
         const c = SOFT[s.color];
         const sub = dailySub(r);
         return '<div class="tl-item">' +
-                 return '<div class="tl-item">' +
           '<div class="tl-time">' + r.time + '</div>' +
           '<div class="tl-card" data-record-id="' + r.id + '" style="cursor:pointer">' +
             '<div class="tl-head">' +
