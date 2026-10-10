@@ -412,7 +412,7 @@ let currentTab = 'home';
 let dailyDate = todayStr();
 let pendingType = null;
 let onboardingStep = null;
-
+let trendType = 'weight'; // 30天趋势当前维度
 function pet() {
   if (!DATA) return null;
   return DATA.pets.find(function (p) { return p.id === DATA.currentPetId; }) || DATA.pets[0];
@@ -795,10 +795,13 @@ function renderDaily() {
         const c = SOFT[s.color];
         const sub = dailySub(r);
         return '<div class="tl-item">' +
+                 return '<div class="tl-item">' +
           '<div class="tl-time">' + r.time + '</div>' +
-          '<div class="tl-card"><div class="tl-head">' +
-            '<div class="ic-wrap sm" style="background:' + c.bg + ';color:' + c.fg + '">' + icon(s.icon, 18) + '</div>' +
-            '<div class="tl-title">' + esc(dailyTitle(r)) + '</div></div>' +
+          '<div class="tl-card" data-record-id="' + r.id + '" style="cursor:pointer">' +
+            '<div class="tl-head">' +
+              '<div class="ic-wrap sm" style="background:' + c.bg + ';color:' + c.fg + '">' + icon(s.icon, 18) + '</div>' +
+              '<div class="tl-title">' + esc(dailyTitle(r)) + '</div>' +
+            '</div>' +
             (sub ? '<div class="tl-detail">' + esc(sub) + '</div>' : '') +
           '</div>' +
         '</div>';
@@ -846,54 +849,120 @@ function openDatePicker() {
 }
 
 /* ---------- 健康页 ---------- */
+/* 30天趋势图（可切换维度） */
 function renderWeightChart() {
   const end = todayStr();
   const start = dateAdd(end, -29);
-  const recs = healthRecords()
-    .filter(function (r) { return r.type === 'weight' && r.date >= start && r.date <= end; })
-    .sort(function (a, b) { return a.date.localeCompare(b.date); });
-  if (recs.length < 2) return '<div class="chart-empty">至少记录 2 次体重后显示趋势</div>';
+  const days = [];
+  for (let i = 29; i >= 0; i--) days.push(dateAdd(end, -i));
 
-  const vals = recs.map(function (r) { return r.data.value; });
-  let min = Math.min.apply(null, vals);
-  let max = Math.max.apply(null, vals);
-  if (max - min < 0.4) { const mid = (max + min) / 2; min = mid - 0.3; max = mid + 0.3; }
-  const padding = (max - min) * 0.16;
-  min -= padding; max += padding;
+  let values = [];
+  let unit = '';
 
-  const W = 320, H = 130, padL = 34, padR = 12, padT = 12, padB = 24;
+  if (trendType === 'weight') {
+    unit = 'kg';
+    const recs = healthRecords().filter(r => r.type === 'weight' && r.date >= start && r.date <= end);
+    const byDate = {};
+    recs.forEach(r => { byDate[r.date] = r.data.value; });
+    values = days.map(d => byDate[d] || 0);
+  } else if (trendType === 'diet-main' || trendType === 'diet-can') {
+    unit = 'g';
+    const food = trendType === 'diet-main' ? '主粮' : '罐头';
+    const recs = dailyRecords().filter(r => r.date >= start && r.date <= end && r.type === 'diet' && r.data.food === food);
+    const byDate = {};
+    recs.forEach(r => { byDate[r.date] = (byDate[r.date] || 0) + (r.data.amount || 0); });
+    values = days.map(d => byDate[d] || 0);
+  } else if (trendType === 'water') {
+    unit = 'ml';
+    const recs = dailyRecords().filter(r => r.date >= start && r.date <= end && r.type === 'water');
+    const byDate = {};
+    recs.forEach(r => { byDate[r.date] = (byDate[r.date] || 0) + (r.data.amount || 0); });
+    values = days.map(d => byDate[d] || 0);
+  } else if (trendType === 'poop') {
+    unit = '次';
+    const recs = dailyRecords().filter(r => r.date >= start && r.date <= end && r.type === 'poop');
+    const byDate = {};
+    recs.forEach(r => { byDate[r.date] = (byDate[r.date] || 0) + 1; });
+    values = days.map(d => byDate[d] || 0);
+  }
+
+  const hasData = values.some(v => v > 0);
+  if (!hasData) return '<div class="chart-empty">这个维度还没有记录</div>';
+
+  /* 体重：折线图 */
+  if (trendType === 'weight') {
+    const pts = [];
+    days.forEach((d, i) => { if (values[i] > 0) pts.push({ x: i, y: values[i] }); });
+    if (pts.length < 2) return '<div class="chart-empty">至少记录 2 次体重后显示趋势</div>';
+
+    let min = Math.min.apply(null, pts.map(p => p.y));
+    let max = Math.max.apply(null, pts.map(p => p.y));
+    if (max - min < 0.4) { const mid = (max + min) / 2; min = mid - 0.3; max = mid + 0.3; }
+    const pad = (max - min) * 0.16;
+    min -= pad; max += pad;
+
+    const W = 320, H = 130, padL = 34, padR = 12, padT = 12, padB = 24;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    function xOf(i) { return padL + (i / 29) * plotW; }
+    function yOf(v) { return padT + (1 - (v - min) / (max - min)) * plotH; }
+
+    const linePts = pts.map(p => ({ x: xOf(p.x), y: yOf(p.y) }));
+    const line = linePts.map((p, i) => (i ? 'L' : 'M') + p.x.toFixed(1) + ' ' + p.y.toFixed(1)).join(' ');
+    const baseY = (padT + plotH).toFixed(1);
+    const area = line + ' L ' + linePts[linePts.length - 1].x.toFixed(1) + ' ' + baseY + ' L ' + linePts[0].x.toFixed(1) + ' ' + baseY + ' Z';
+
+    let grid = '';
+    for (let i = 0; i <= 3; i++) {
+      const y = padT + (plotH / 3) * i;
+      const val = max - ((max - min) / 3) * i;
+      grid += '<line x1="' + padL + '" y1="' + y.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + y.toFixed(1) + '" stroke="#F0EDE7" stroke-width="1"/>';
+      grid += '<text x="' + (padL - 8) + '" y="' + (y + 3.5).toFixed(1) + '" font-size="9" fill="#B5B0A8" text-anchor="end">' + val.toFixed(1) + '</text>';
+    }
+    const xLabels =
+      '<text x="' + padL + '" y="' + (H - 6) + '" font-size="9" fill="#B5B0A8" text-anchor="start">' + fmtMD2(start) + '</text>' +
+      '<text x="' + (W - padR) + '" y="' + (H - 6) + '" font-size="9" fill="#B5B0A8" text-anchor="end">' + fmtMD2(end) + '</text>';
+    const dots = linePts.map(p => '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="4" fill="#fff" stroke="#E89458" stroke-width="2.2"/>').join('');
+
+    return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="auto" preserveAspectRatio="xMidYMid meet" style="display:block">' +
+      '<defs><linearGradient id="wg" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0%" stop-color="#E89458" stop-opacity="0.22"/>' +
+        '<stop offset="100%" stop-color="#E89458" stop-opacity="0"/>' +
+      '</linearGradient></defs>' +
+      grid + '<path d="' + area + '" fill="url(#wg)"/>' +
+      '<path d="' + line + '" fill="none" stroke="#E89458" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' +
+      dots + xLabels + '</svg>';
+  }
+
+  /* 其他维度：柱状图 */
+  const W = 320, H = 130, padL = 12, padR = 12, padT = 12, padB = 24;
   const plotW = W - padL - padR;
   const plotH = H - padT - padB;
-  function xOf(d) { return padL + (daysBetween(start, d) / 29) * plotW; }
-  function yOf(v) { return padT + (1 - (v - min) / (max - min)) * plotH; }
+  const maxVal = Math.max(1, Math.max.apply(null, values));
+  const barW = plotW / 30 * 0.65;
 
-  const pts = recs.map(function (r) { return { x: xOf(r.date), y: yOf(r.data.value) }; });
-  const line = pts.map(function (p, i) { return (i ? 'L' : 'M') + p.x.toFixed(1) + ' ' + p.y.toFixed(1); }).join(' ');
-  const baseY = (padT + plotH).toFixed(1);
-  const area = line + ' L ' + pts[pts.length - 1].x.toFixed(1) + ' ' + baseY + ' L ' + pts[0].x.toFixed(1) + ' ' + baseY + ' Z';
-
+  let bars = '';
   let grid = '';
-  for (let i = 0; i <= 3; i++) {
-    const y = padT + (plotH / 3) * i;
-    const val = max - ((max - min) / 3) * i;
+  for (let i = 0; i <= 2; i++) {
+    const y = padT + (plotH / 2) * i;
     grid += '<line x1="' + padL + '" y1="' + y.toFixed(1) + '" x2="' + (W - padR) + '" y2="' + y.toFixed(1) + '" stroke="#F0EDE7" stroke-width="1"/>';
-    grid += '<text x="' + (padL - 8) + '" y="' + (y + 3.5).toFixed(1) + '" font-size="9" fill="#B5B0A8" text-anchor="end">' + val.toFixed(1) + '</text>';
   }
+  days.forEach((d, i) => {
+    const v = values[i];
+    if (v === 0) return;
+    const x = padL + (i / 29) * plotW;
+    const h = Math.max(2, (v / maxVal) * plotH);
+    const y = padT + plotH - h;
+    const isToday = i === 29;
+    bars += '<rect x="' + (x - barW / 2).toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + barW.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="' + (barW / 2).toFixed(1) + '" fill="' + (isToday ? '#D6803F' : '#E89458') + '" opacity="' + (isToday ? '1' : '0.75') + '"/>';
+  });
+
   const xLabels =
     '<text x="' + padL + '" y="' + (H - 6) + '" font-size="9" fill="#B5B0A8" text-anchor="start">' + fmtMD2(start) + '</text>' +
     '<text x="' + (W - padR) + '" y="' + (H - 6) + '" font-size="9" fill="#B5B0A8" text-anchor="end">' + fmtMD2(end) + '</text>';
-  const dots = pts.map(function (p) {
-    return '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="4" fill="#fff" stroke="#E89458" stroke-width="2.2"/>';
-  }).join('');
 
   return '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="auto" preserveAspectRatio="xMidYMid meet" style="display:block">' +
-    '<defs><linearGradient id="wg" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0%" stop-color="#E89458" stop-opacity="0.22"/>' +
-      '<stop offset="100%" stop-color="#E89458" stop-opacity="0"/>' +
-    '</linearGradient></defs>' +
-    grid + '<path d="' + area + '" fill="url(#wg)"/>' +
-    '<path d="' + line + '" fill="none" stroke="#E89458" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>' +
-    dots + xLabels + '</svg>';
+    grid + bars + xLabels + '</svg>';
 }
 
 function renderVaccineProgress() {
@@ -1048,8 +1117,20 @@ function renderHealth() {
       '<div class="wh-value">' + curWeight + '<span>kg</span></div>' +
       '<div style="margin-top:10px">' + changeHtml + '</div>' +
     '</div>' +
-    '<div class="card"><div class="section-head" style="margin:0 0 4px"><h2 style="font-size:14px">近 30 天趋势</h2></div>' +
-      '<div class="chart-wrap">' + renderWeightChart() + '</div></div>' +
+       '<div class="card">' +
+      '<div class="trend-tabs">' +
+        [
+          { k: 'weight',    label: '体重' },
+          { k: 'diet-main', label: '主粮' },
+          { k: 'diet-can',  label: '罐头' },
+          { k: 'water',     label: '饮水' },
+          { k: 'poop',      label: '排泄' }
+        ].map(function (t) {
+          return '<button class="trend-tab' + (trendType === t.k ? ' active' : '') + '" data-trend="' + t.k + '">' + t.label + '</button>';
+        }).join('') +
+      '</div>' +
+      '<div class="chart-wrap">' + renderWeightChart() + '</div>' +
+    '</div>' +
     '<div class="card" style="padding:18px 20px">' +
       '<div class="section-head" style="margin:0 0 14px"><h2 style="font-size:14px">疫苗进度</h2></div>' +
       renderVaccineProgress() + '</div>' +
@@ -1774,6 +1855,18 @@ document.addEventListener('click', function (e) {
   if (goto) { currentTab = goto.dataset.goto; render(); return; }
   const quickCell = e.target.closest('[data-quick]');
   if (quickCell) { openRecordForm(quickCell.dataset.quick); return; }
+     const trendTab = e.target.closest('[data-trend]');
+  if (trendTab) {
+    trendType = trendTab.dataset.trend;
+    renderHealth();
+    return;
+  }
+
+  const tlCard = e.target.closest('.tl-card[data-record-id]');
+  if (tlCard) {
+    openDailyRecordSheet(tlCard.dataset.recordId);
+    return;
+  }
   const quickType = e.target.closest('[data-quick-type]');
   if (quickType) {
     const t = quickType.dataset.quickType;
@@ -1837,6 +1930,83 @@ document.addEventListener('keydown', function (e) {
 });
 
 /* ---------- 启动 ---------- */
+/* ---------- 日常记录详情 + 删除 ---------- */
+function openDailyRecordSheet(id) {
+  const rec = dailyRecords().find(function (r) { return r.id === id; });
+  if (!rec) return;
+  const s = TYPE_STYLE[rec.type] || { icon: 'file', color: 'gray', label: '记录' };
+  const c = SOFT[s.color];
+
+  const rows = [
+    ['时间', rec.time],
+    ['类型', s.label]
+  ];
+  if (rec.type === 'diet') {
+    rows.push(['餐次', rec.data.meal]);
+    rows.push(['食物', rec.data.food || '主粮']);
+    rows.push(['食欲', rec.data.appetite]);
+    rows.push(['分量', (rec.data.amount || 0) + ' g']);
+    if (rec.data.note) rows.push(['备注', rec.data.note]);
+  } else if (rec.type === 'water') {
+    rows.push(['水量', (rec.data.amount || 0) + ' ml']);
+    rows.push(['水源', rec.data.source]);
+  } else if (rec.type === 'poop') {
+    rows.push(['类型', rec.data.subtype]);
+    rows.push(['状态', rec.data.status]);
+  } else if (rec.type === 'mood') {
+    rows.push(['情绪', rec.data.mood]);
+    if (rec.data.note) rows.push(['备注', rec.data.note]);
+  } else if (rec.type === 'care') {
+    rows.push(['护理项', rec.data.care]);
+  } else if (rec.type === 'health') {
+    rows.push(['体重', (rec.data.value || 0) + ' kg']);
+    if (rec.data.note) rows.push(['备注', rec.data.note]);
+  }
+
+  openSheet(
+    '<div class="sheet-handle"></div>' +
+    '<h3 class="sheet-title">' + esc(dailyTitle(rec)) + '</h3>' +
+    '<div class="sheet-sub">' + fmtMD(rec.date) + ' · ' + rec.time + '</div>' +
+    '<div class="sheet-body">' +
+      '<div class="record-detail-card">' +
+        rows.map(function (r) {
+          return '<div class="rd-row"><span class="rd-k">' + r[0] + '</span><span class="rd-v">' + esc(r[1]) + '</span></div>';
+        }).join('') +
+      '</div>' +
+    '</div>' +
+    '<div class="sheet-actions" style="display:flex;gap:10px">' +
+      '<button type="button" class="btn btn-ghost" id="closeRecBtn" style="flex:1">关闭</button>' +
+      '<button type="button" class="btn btn-danger" id="deleteRecBtn" style="flex:1;background:#D9534F;color:#fff">' +
+        icon('trash', 16) + ' 删除' +
+      '</button>' +
+    '</div>'
+  );
+
+  document.getElementById('closeRecBtn').onclick = closeSheet;
+  document.getElementById('deleteRecBtn').onclick = function () {
+    if (!confirm('删除这条记录？删除后无法恢复。')) return;
+    deleteDailyRecord(rec.id);
+  };
+}
+
+function deleteDailyRecord(id) {
+  const rec = dailyRecords().find(function (r) { return r.id === id; });
+  if (!rec) return;
+  const p = pet();
+  p.dailyRecords = p.dailyRecords.filter(function (r) { return r.id !== id; });
+
+  // 如果是体重记录，同步删除 healthRecords 里对应的那条
+  if (rec.type === 'health') {
+    p.healthRecords = p.healthRecords.filter(function (r) {
+      return !(r.type === 'weight' && r.date === rec.date && r.data && r.data.value === rec.data.value);
+    });
+  }
+
+  saveData(DATA);
+  closeSheet();
+  render();
+  toast('已删除');
+}
 async function boot() {
   try { await idbOpen(); }
   catch (e) { console.warn('IndexedDB 不可用，头像功能将受限', e); }
