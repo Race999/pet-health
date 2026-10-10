@@ -687,33 +687,32 @@ function renderWeekTrend() {
   for (let i = 6; i >= 0; i--) days.push(dateAdd(todayKey, -i));
 
   const metrics = [
-    { key: 'diet-main',   label: '主粮', icon: 'bowl', color: 'orange', unit: 'g',
+    { key: 'diet-main',  label: '主粮', icon: 'bowl', color: 'orange', unit: 'g',
       match: r => r.type === 'diet' && r.data.food === '主粮',
       total: list => list.reduce((s, r) => s + (r.data.amount || 0), 0) },
-    { key: 'diet-can',    label: '罐头', icon: 'bowl', color: 'yellow', unit: 'g',
+    { key: 'diet-can',   label: '罐头', icon: 'bowl', color: 'yellow', unit: 'g',
       match: r => r.type === 'diet' && r.data.food === '罐头',
       total: list => list.reduce((s, r) => s + (r.data.amount || 0), 0) },
-    { key: 'diet-snack',  label: '零食', icon: 'bowl', color: 'pink', unit: 'g',
+    { key: 'diet-snack', label: '零食', icon: 'bowl', color: 'pink', unit: 'g',
       match: r => r.type === 'diet' && r.data.food === '零食',
       total: list => list.reduce((s, r) => s + (r.data.amount || 0), 0) },
-    { key: 'diet-rx',     label: '处方粮', icon: 'bowl', color: 'green', unit: 'g',
+    { key: 'diet-rx',    label: '处方粮', icon: 'bowl', color: 'green', unit: 'g',
       match: r => r.type === 'diet' && r.data.food === '处方粮',
       total: list => list.reduce((s, r) => s + (r.data.amount || 0), 0) },
-    { key: 'diet-wet',    label: '湿粮', icon: 'bowl', color: 'blue', unit: 'g',
+    { key: 'diet-wet',   label: '湿粮', icon: 'bowl', color: 'blue', unit: 'g',
       match: r => r.type === 'diet' && r.data.food === '湿粮',
       total: list => list.reduce((s, r) => s + (r.data.amount || 0), 0) },
-    { key: 'water',       label: '饮水', icon: 'drop', color: 'blue', unit: 'ml',
+    { key: 'water',      label: '饮水', icon: 'drop', color: 'blue', unit: 'ml',
       match: r => r.type === 'water',
       total: list => list.reduce((s, r) => s + (r.data.amount || 0), 0) },
-    { key: 'poop',        label: '排泄', icon: 'paw', color: 'green', unit: '次',
+    { key: 'poop',       label: '排泄', icon: 'paw', color: 'green', unit: '次',
       match: r => r.type === 'poop',
       total: list => list.length },
-    { key: 'care',        label: '护理', icon: 'sparkles', color: 'purple', unit: '次',
+    { key: 'care',       label: '护理', icon: 'sparkles', color: 'purple', unit: '次',
       match: r => r.type === 'care',
       total: list => list.length }
   ];
 
-  // 按天 + metric 聚合
   const bucket = {};
   days.forEach(d => { bucket[d] = {}; });
   allRecs.forEach(r => {
@@ -726,7 +725,6 @@ function renderWeekTrend() {
     });
   });
 
-  // 只显示有数据的 metric 行（最近 7 天任意一天有数据）
   const activeMetrics = metrics.filter(m =>
     days.some(d => (bucket[d][m.key] || []).length > 0)
   );
@@ -738,14 +736,20 @@ function renderWeekTrend() {
     const maxVal = Math.max(1, Math.max.apply(null, perDay));
     const soft = SOFT[m.color];
 
-    const bars = days.map((d, i) => {
+    const cols = days.map((d, i) => {
       const v = perDay[i];
-      const h = v === 0 ? 3 : Math.max(8, Math.round((v / maxVal) * 28));
+      const h = v === 0 ? 3 : Math.max(6, Math.round((v / maxVal) * 26));
       const isToday = d === todayKey;
       const color = v === 0 ? '#EDEAE4' : soft.fg;
-      return '<div class="wt-bar-wrap">' +
+      const numLabel = v === 0 ? '' : String(v);
+      const dd = (+d.slice(8));
+      return '<div class="wt-col">' +
+        '<div class="wt-num">' + numLabel + '</div>' +
         '<div class="wt-bar' + (isToday ? ' today' : '') + '" ' +
           'style="height:' + h + 'px;background:' + color + '"></div>' +
+        '<div class="wt-date' + (isToday ? ' today' : '') + '">' +
+          (isToday ? '今' : dd) +
+        '</div>' +
       '</div>';
     }).join('');
 
@@ -755,7 +759,7 @@ function renderWeekTrend() {
         '<div><div class="wt-label">' + m.label + '</div>' +
         '<div class="wt-val">' + todayVal + ' <span>' + m.unit + '</span></div></div>' +
       '</div>' +
-      '<div class="wt-chart">' + bars + '</div>' +
+      '<div class="wt-chart">' + cols + '</div>' +
     '</div>';
   }).join('');
 
